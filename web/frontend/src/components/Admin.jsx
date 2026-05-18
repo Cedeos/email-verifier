@@ -258,21 +258,35 @@ export default function Admin() {
                 <tbody className="divide-y divide-gray-100">
                   {logs.map((log) => (
                     <tr key={log.id} className="hover:bg-gray-50">
-                      <td className="py-3 px-4 text-gray-900 text-xs">{log.user_email || '-'}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 bg-gray-100 rounded-full flex items-center justify-center">
+                            <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                            </svg>
+                          </div>
+                          <span className="text-gray-900 text-xs font-medium">{log.user_email || '-'}</span>
+                        </div>
+                      </td>
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                           log.action === 'single_verify' ? 'bg-indigo-100 text-indigo-800' :
-                          log.action === 'bulk_verify' ? 'bg-purple-100 text-purple-800' :
+                          log.action === 'bulk_verify' || log.action === 'bulk_complete' ? 'bg-purple-100 text-purple-800' :
+                          log.action === 'login' ? 'bg-green-100 text-green-800' :
+                          log.action === 'invite_user' ? 'bg-blue-100 text-blue-800' :
                           'bg-gray-100 text-gray-800'
                         }`}>
-                          {log.action}
+                          {log.action === 'single_verify' ? 'Verify' :
+                           log.action === 'bulk_verify' ? 'Bulk Upload' :
+                           log.action === 'bulk_complete' ? 'Bulk Done' :
+                           log.action === 'login' ? 'Sign In' :
+                           log.action === 'invite_user' ? 'Invite' :
+                           log.action}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-gray-600 text-xs max-w-[200px] truncate">{log.details || '-'}</td>
                       <td className="py-3 px-4 text-gray-600 text-xs">{log.result || '-'}</td>
-                      <td className="py-3 px-4 text-gray-500 text-xs">
-                        {log.created_at ? new Date(log.created_at).toLocaleString() : '-'}
-                      </td>
+                      <td className="py-3 px-4 text-gray-500 text-xs whitespace-nowrap">{log.created_at || '-'}</td>
                     </tr>
                   ))}
                 </tbody>

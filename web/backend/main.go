@@ -135,6 +135,7 @@ func main() {
 
 	// API routes
 	mux.HandleFunc("/api/health", handleHealth)
+	mux.HandleFunc("/api/auth/log", authMiddleware(handleAuthLog))
 	mux.HandleFunc("/api/verify/single", authMiddleware(handleSingleVerify))
 	mux.HandleFunc("/api/verify/bulk", authMiddleware(handleBulkVerify))
 	mux.HandleFunc("/api/verify/bulk/status/", authMiddleware(handleBulkStatus))
@@ -279,6 +280,16 @@ func adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]string{"status": "ok", "service": "email-verifier"})
+}
+
+func handleAuthLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	email := r.Header.Get("X-User-Email")
+	addLog(email, "login", "User signed in", "success")
+	jsonResponse(w, map[string]string{"status": "ok"})
 }
 
 func handleSingleVerify(w http.ResponseWriter, r *http.Request) {
@@ -793,6 +804,8 @@ func processBulkVerification(jobID string, emails []string, userEmail string) {
 
 // --- Logging ---
 
+var eat = time.FixedZone("EAT", 3*60*60) // UTC+3 East Africa Time
+
 func addLog(userEmail, action, details, result string) {
 	logMu.Lock()
 	defer logMu.Unlock()
@@ -804,7 +817,7 @@ func addLog(userEmail, action, details, result string) {
 		Action:    action,
 		Details:   details,
 		Result:    result,
-		CreatedAt: time.Now().Format(time.RFC3339),
+		CreatedAt: time.Now().In(eat).Format("2006-01-02 15:04:05 EAT"),
 	})
 
 	// Keep max 1000 logs in memory
@@ -828,7 +841,7 @@ func jsonError(w http.ResponseWriter, message string, status int) {
 
 func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
-		return value
+		return strings.TrimSpace(value)
 	}
 	return fallback
 }

@@ -71,6 +71,14 @@ export function AuthProvider({ children }) {
       password,
     })
     if (error) throw error
+    // Log the sign-in
+    const { data: { session: s } } = await supabase.auth.getSession()
+    if (s) {
+      fetch('/api/auth/log', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${s.access_token}` },
+      }).catch(() => {})
+    }
   }
 
   const signOut = async () => {
