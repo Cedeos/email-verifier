@@ -538,15 +538,21 @@ func handleAdminInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	if req.Email == "" {
-		jsonError(w, "Email is required", http.StatusBadRequest)
+	if req.Email == "" || req.Password == "" {
+		jsonError(w, "Email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Password) < 6 {
+		jsonError(w, "Password must be at least 6 characters", http.StatusBadRequest)
 		return
 	}
 
@@ -557,12 +563,14 @@ func handleAdminInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Invite user via Supabase Admin API (generates invite link)
+	// Create user via Supabase Admin API with password
 	body, _ := json.Marshal(map[string]interface{}{
-		"email": req.Email,
+		"email":             req.Email,
+		"password":          req.Password,
+		"email_confirm":     true,
 	})
 
-	httpReq, _ := http.NewRequest("POST", config.SupabaseURL+"/auth/v1/invite", bytes.NewReader(body))
+	httpReq, _ := http.NewRequest("POST", config.SupabaseURL+"/auth/v1/admin/users", bytes.NewReader(body))
 	httpReq.Header.Set("Authorization", "Bearer "+config.SupabaseServiceKey)
 	httpReq.Header.Set("apikey", config.SupabaseServiceKey)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -570,7 +578,7 @@ func handleAdminInvite(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		jsonError(w, "Failed to invite user", http.StatusInternalServerError)
+		jsonError(w, "Failed to create user", http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
@@ -578,7 +586,7 @@ func handleAdminInvite(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode >= 400 {
 		var errResp map[string]interface{}
 		json.NewDecoder(resp.Body).Decode(&errResp)
-		msg := "Failed to invite user"
+		msg := "Failed to create user"
 		if m, ok := errResp["msg"].(string); ok {
 			msg = m
 		}
@@ -590,9 +598,9 @@ func handleAdminInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	adminEmail := r.Header.Get("X-User-Email")
-	addLog(adminEmail, "invite_user", req.Email, "invited")
+	addLog(adminEmail, "invite_user", req.Email, "created")
 
-	jsonResponse(w, map[string]string{"status": "invited", "email": req.Email})
+	jsonResponse(w, map[string]string{"status": "created", "email": req.Email})
 }
 
 func handleAdminLogs(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ export default function Admin() {
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [loadingLogs, setLoadingLogs] = useState(true)
   const [inviteEmail, setInviteEmail] = useState('')
+  const [invitePassword, setInvitePassword] = useState('')
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteMsg, setInviteMsg] = useState(null)
   const [logFilter, setLogFilter] = useState('all')
@@ -75,15 +76,18 @@ export default function Admin() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ email: inviteEmail.trim() }),
+        body: JSON.stringify({ email: inviteEmail.trim(), password: invitePassword.trim() }),
       })
-      const data = await res.json()
+      const text = await res.text()
+      let data
+      try { data = JSON.parse(text) } catch { data = { error: 'Server error' } }
       if (res.ok) {
-        setInviteMsg({ type: 'success', text: `Invited ${inviteEmail.trim()} successfully` })
+        setInviteMsg({ type: 'success', text: `Created account for ${inviteEmail.trim()}. Share the password with them.` })
         setInviteEmail('')
+        setInvitePassword('')
         fetchUsers()
       } else {
-        setInviteMsg({ type: 'error', text: data.error || 'Failed to invite user' })
+        setInviteMsg({ type: 'error', text: data.error || 'Failed to create user' })
       }
     } catch (err) {
       setInviteMsg({ type: 'error', text: err.message })
@@ -133,22 +137,32 @@ export default function Admin() {
               </div>
             </div>
             <div className="p-6">
-              <form onSubmit={handleInvite} className="flex gap-3">
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="colleague@cedeos.co.ke"
-                  className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-gray-900 placeholder:text-gray-400 text-sm"
-                  disabled={inviteLoading}
-                />
-                <button
-                  type="submit"
-                  disabled={inviteLoading || !inviteEmail.trim()}
-                  className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
-                >
-                  {inviteLoading ? 'Inviting...' : 'Invite'}
-                </button>
+              <form onSubmit={handleInvite} className="space-y-3">
+                <div className="flex gap-3">
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="colleague@cedeos.co.ke"
+                    className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#1a2e1a] focus:border-[#1a2e1a] outline-none text-gray-900 placeholder:text-gray-400 text-sm"
+                    disabled={inviteLoading}
+                  />
+                  <input
+                    type="text"
+                    value={invitePassword}
+                    onChange={(e) => setInvitePassword(e.target.value)}
+                    placeholder="Password"
+                    className="w-40 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#1a2e1a] focus:border-[#1a2e1a] outline-none text-gray-900 placeholder:text-gray-400 text-sm"
+                    disabled={inviteLoading}
+                  />
+                  <button
+                    type="submit"
+                    disabled={inviteLoading || !inviteEmail.trim() || !invitePassword.trim()}
+                    className="px-6 py-3 bg-[#1a2e1a] text-white rounded-xl font-medium hover:bg-[#243d24] disabled:opacity-50 disabled:cursor-not-allowed transition-all text-sm"
+                  >
+                    {inviteLoading ? 'Creating...' : 'Create'}
+                  </button>
+                </div>
               </form>
               {inviteMsg && (
                 <div className={`mt-3 p-3 rounded-lg text-sm ${
