@@ -29,6 +29,7 @@ type Config struct {
 	AdminEmail         string
 	SMTPEnabled        bool
 	GravatarEnabled    bool
+	SOCKS5Proxy        string
 }
 
 // VerificationResult extends the library result with extra fields for the UI
@@ -74,6 +75,7 @@ type BulkSummary struct {
 	Valid       int `json:"valid"`
 	Invalid     int `json:"invalid"`
 	Unknown     int `json:"unknown"`
+	Risky       int `json:"risky"`
 	CatchAll    int `json:"catch_all"`
 	Disposable  int `json:"disposable"`
 	RoleAccount int `json:"role_account"`
@@ -111,6 +113,7 @@ func main() {
 		AdminEmail:         getEnv("ADMIN_EMAIL", "alvin@cedeos.co.ke"),
 		SMTPEnabled:        getEnv("SMTP_ENABLED", "true") == "true",
 		GravatarEnabled:    getEnv("GRAVATAR_ENABLED", "true") == "true",
+		SOCKS5Proxy:        getEnv("SOCKS5_PROXY", ""),
 	}
 
 	// Parse allowed domains
@@ -128,6 +131,9 @@ func main() {
 
 	if config.SMTPEnabled {
 		verifier.EnableSMTPCheck()
+	}
+	if config.SOCKS5Proxy != "" {
+		verifier.Proxy(config.SOCKS5Proxy)
 	}
 	if config.GravatarEnabled {
 		verifier.EnableGravatarCheck()
@@ -658,6 +664,7 @@ func verifyEmail(email string) VerificationResult {
 	vr.Suggestion = result.Suggestion
 	vr.Reachable = result.Reachable
 
+	// Hard fails - definitely invalid
 	if !result.Syntax.Valid {
 		vr.Status = "invalid"
 		vr.SubStatus = "bad_syntax"
@@ -666,7 +673,7 @@ func verifyEmail(email string) VerificationResult {
 
 	if result.Disposable {
 		vr.Status = "invalid"
-		vr.SubStatus = "disposable"
+		vr.SubStatus = "disposable_email"
 		return vr
 	}
 
@@ -676,51 +683,62 @@ func verifyEmail(email string) VerificationResult {
 		return vr
 	}
 
-	if result.SMTP != nil {
-		vr.HostExists = result.SMTP.HostExists
-		vr.CatchAll = result.SMTP.CatchAll
-		vr.Deliverable = result.SMTP.Deliverable
-		vr.FullInbox = result.SMTP.FullInbox
-		vr.Disabled = result.SMTP.Disabled
+	// MX provider info
+	mx, _ := verifier.CheckMX(result.Syntax.Domain)
+	if mx != nil && len(mx.Records) > 0 {
+		vr.MXRecord = mx.Records[0].Host
+		vr.SMTPProvider = detectSMTPProvider(mx.Records[0].Host)
+	}
 
-		if result.SMTP.Disabled {
-			vr.Status = "invalid"
-			vr.SubStatus = "mailbox_disabled"
-		} else if result.SMTP.FullInbox {
-			vr.Status = "invalid"
-			vr.SubStatus = "full_inbox"
-		} else if result.SMTP.CatchAll {
-			vr.Status = "catch-all"
-			vr.SubStatus = "catch_all"
-		} else if result.SMTP.Deliverable {
-			vr.Status = "valid"
-			vr.SubStatus = "none"
-		} else if !result.SMTP.HostExists {
-			vr.Status = "invalid"
-			vr.SubStatus = "host_not_found"
-		} else {
-			vr.Status = "unknown"
-			vr.SubStatus = "smtp_check_inconclusive"
-		}
-	} else {
-		if result.HasMxRecords {
-			vr.Status = "valid"
-			vr.SubStatus = "none"
-		} else {
-			vr.Status = "unknown"
-			vr.SubStatus = "no_smtp_check"
-		}
+	// SMTP-based verdict
+	if result.SMTP == nil {
+		// SMTP check disabled or couldn't be performed
+		vr.Status = "unknown"
+		vr.SubStatus = "smtp_check_unavailable"
+		vr.Reachable = "unknown"
+		return vr
+	}
+
+	vr.HostExists = result.SMTP.HostExists
+	vr.CatchAll = result.SMTP.CatchAll
+	vr.Deliverable = result.SMTP.Deliverable
+	vr.FullInbox = result.SMTP.FullInbox
+	vr.Disabled = result.SMTP.Disabled
+
+	// Honest status mapping based on actual SMTP results
+	switch {
+	case result.SMTP.Disabled:
+		vr.Status = "invalid"
+		vr.SubStatus = "mailbox_disabled"
+	case result.SMTP.FullInbox:
+		vr.Status = "risky"
+		vr.SubStatus = "full_inbox"
+		vr.Reachable = "unknown"
+	case !result.SMTP.HostExists:
+		// Couldn't connect to SMTP server (port 25 blocked, etc.)
+		vr.Status = "unknown"
+		vr.SubStatus = "smtp_unreachable"
+		vr.Reachable = "unknown"
+	case result.SMTP.Deliverable:
+		// SMTP server confirmed mailbox exists - this is the only true "valid"
+		vr.Status = "valid"
+		vr.SubStatus = "mailbox_exists"
+		vr.Reachable = "yes"
+	case result.SMTP.CatchAll:
+		// Domain accepts all emails - we don't know if the specific mailbox exists
+		vr.Status = "risky"
+		vr.SubStatus = "catch_all_domain"
+		vr.Reachable = "unknown"
+	default:
+		// SMTP rejected the RCPT TO - mailbox likely doesn't exist
+		vr.Status = "invalid"
+		vr.SubStatus = "mailbox_not_found"
+		vr.Reachable = "no"
 	}
 
 	if result.Gravatar != nil {
 		vr.HasGravatar = result.Gravatar.HasGravatar
 		vr.GravatarURL = result.Gravatar.GravatarUrl
-	}
-
-	mx, _ := verifier.CheckMX(result.Syntax.Domain)
-	if mx != nil && len(mx.Records) > 0 {
-		vr.MXRecord = mx.Records[0].Host
-		vr.SMTPProvider = detectSMTPProvider(mx.Records[0].Host)
 	}
 
 	return vr
@@ -784,8 +802,11 @@ func processBulkVerification(jobID string, emails []string, userEmail string) {
 			summary.Valid++
 		case "invalid":
 			summary.Invalid++
-		case "catch-all":
-			summary.CatchAll++
+		case "risky", "catch-all":
+			summary.Risky++
+			if r.CatchAll {
+				summary.CatchAll++
+			}
 		default:
 			summary.Unknown++
 		}

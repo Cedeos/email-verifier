@@ -63,11 +63,10 @@ export default function SingleVerify({ onVerified }) {
 
       setResult(data)
 
-      // If valid, show enrichment form
-      if (data.status === 'valid' || data.status === 'catch-all') {
+      // Only show enrichment form for CONFIRMED valid emails
+      if (data.status === 'valid') {
         setShowEnrich(true)
         setCompany(extractCompanyFromDomain(data.domain))
-        // Try to guess first/last from username
         const parts = (data.username || '').split(/[._-]/)
         if (parts.length >= 2) {
           setFirstName(parts[0].charAt(0).toUpperCase() + parts[0].slice(1))
@@ -198,14 +197,20 @@ export default function SingleVerify({ onVerified }) {
                 <p className="text-base font-semibold text-gray-900">{result.email}</p>
                 <div className="flex items-center gap-2 mt-1">
                   <StatusBadge status={result.status} />
-                  {result.reachable === 'yes' && (
-                    <span className="text-xs text-green-600 font-medium">Will not bounce</span>
+                  {result.status === 'valid' && (
+                    <span className="text-xs text-green-600 font-medium">Mailbox confirmed - safe to send</span>
                   )}
-                  {result.reachable === 'unknown' && result.catch_all && (
-                    <span className="text-xs text-amber-600 font-medium">Catch-all domain</span>
-                  )}
-                  {result.reachable === 'no' && (
+                  {result.status === 'invalid' && (
                     <span className="text-xs text-red-600 font-medium">Will bounce</span>
+                  )}
+                  {result.status === 'risky' && result.catch_all && (
+                    <span className="text-xs text-amber-600 font-medium">Catch-all - cannot confirm mailbox</span>
+                  )}
+                  {result.status === 'risky' && !result.catch_all && (
+                    <span className="text-xs text-amber-600 font-medium">Risky - send with caution</span>
+                  )}
+                  {result.status === 'unknown' && (
+                    <span className="text-xs text-gray-500 font-medium">Could not verify - SMTP unavailable</span>
                   )}
                 </div>
               </div>
@@ -342,6 +347,7 @@ function StatusBadge({ status }) {
   const styles = {
     valid: 'bg-green-100 text-green-800',
     invalid: 'bg-red-100 text-red-800',
+    risky: 'bg-amber-100 text-amber-800',
     'catch-all': 'bg-amber-100 text-amber-800',
     unknown: 'bg-gray-100 text-gray-800',
   }
@@ -357,7 +363,8 @@ function getStatusBg(status) {
   switch (status) {
     case 'valid': return 'bg-green-500'
     case 'invalid': return 'bg-red-500'
+    case 'risky': return 'bg-amber-500'
     case 'catch-all': return 'bg-amber-500'
-    default: return 'bg-gray-500'
+    default: return 'bg-gray-400'
   }
 }
