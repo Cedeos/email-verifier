@@ -1,24 +1,25 @@
 # Stage 1: Build frontend
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* ./
+COPY web/frontend/package.json web/frontend/package-lock.json* ./
 RUN npm ci
-COPY frontend/ ./
+COPY web/frontend/ ./
 RUN npm run build
 
 # Stage 2: Build backend
 FROM golang:1.22-alpine AS backend-builder
 WORKDIR /src
 
-# Copy the email-verifier library (parent directory)
-COPY ../go.mod ../go.sum /lib/
-COPY ../*.go /lib/
-COPY ../cmd/ /lib/cmd/
+# Copy the email-verifier library
+COPY go.mod go.sum ./
+COPY *.go ./
+COPY cmd/ ./cmd/
 
 # Copy backend module
-COPY backend/go.mod backend/go.sum* ./
+WORKDIR /src/web/backend
+COPY web/backend/go.mod web/backend/go.sum* ./
 RUN go mod download
-COPY backend/ ./
+COPY web/backend/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -o /email-verifier-server .
 
 # Stage 3: Final image

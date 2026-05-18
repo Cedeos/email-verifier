@@ -1,0 +1,11 @@
+.git
+.github
+.vscode
+web/frontend/node_modules
+web/frontend/dist
+web/backend/backend
+web/backend/backend.exe
+*.md
+!README.md
+.pre-commit-config.yaml
+.golangci.yml

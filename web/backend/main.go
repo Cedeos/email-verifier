@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -19,12 +20,14 @@ import (
 
 // Config holds application configuration
 type Config struct {
-	Port             string
-	AllowedDomains   []string // restrict login to these email domains
-	SupabaseURL      string
-	SupabaseJWTSecret string
-	SMTPEnabled      bool
-	GravatarEnabled  bool
+	Port               string
+	AllowedDomains     []string
+	SupabaseURL        string
+	SupabaseJWTSecret  string
+	SupabaseServiceKey string
+	AdminEmail         string
+	SMTPEnabled        bool
+	GravatarEnabled    bool
 }
 
 // VerificationResult extends the library result with extra fields for the UI
@@ -76,21 +79,36 @@ type BulkSummary struct {
 	Free        int `json:"free"`
 }
 
+// ActivityLog represents an activity log entry
+type ActivityLog struct {
+	ID        string `json:"id"`
+	UserEmail string `json:"user_email"`
+	Action    string `json:"action"`
+	Details   string `json:"details"`
+	Result    string `json:"result"`
+	CreatedAt string `json:"created_at"`
+}
+
 var (
 	config     Config
 	verifier   *emailVerifier.Verifier
 	bulkJobs   = make(map[string]*BulkResult)
 	bulkMu     sync.RWMutex
 	jobCounter int
+	actLogs    []ActivityLog
+	logMu      sync.RWMutex
+	logCounter int
 )
 
 func main() {
 	config = Config{
-		Port:             getEnv("PORT", "8080"),
-		SupabaseURL:      getEnv("SUPABASE_URL", "https://mqdlwzwlzreampufqxzg.supabase.co"),
-		SupabaseJWTSecret: getEnv("SUPABASE_JWT_SECRET", ""),
-		SMTPEnabled:      getEnv("SMTP_ENABLED", "true") == "true",
-		GravatarEnabled:  getEnv("GRAVATAR_ENABLED", "true") == "true",
+		Port:               getEnv("PORT", "8080"),
+		SupabaseURL:        getEnv("SUPABASE_URL", ""),
+		SupabaseJWTSecret:  getEnv("SUPABASE_JWT_SECRET", ""),
+		SupabaseServiceKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		AdminEmail:         getEnv("ADMIN_EMAIL", "alvin@cedeos.co.ke"),
+		SMTPEnabled:        getEnv("SMTP_ENABLED", "true") == "true",
+		GravatarEnabled:    getEnv("GRAVATAR_ENABLED", "true") == "true",
 	}
 
 	// Parse allowed domains
@@ -122,6 +140,11 @@ func main() {
 	mux.HandleFunc("/api/verify/bulk/status/", authMiddleware(handleBulkStatus))
 	mux.HandleFunc("/api/verify/bulk/download/", authMiddleware(handleBulkDownload))
 
+	// Admin routes
+	mux.HandleFunc("/api/admin/users", authMiddleware(adminMiddleware(handleAdminUsers)))
+	mux.HandleFunc("/api/admin/invite", authMiddleware(adminMiddleware(handleAdminInvite)))
+	mux.HandleFunc("/api/admin/logs", authMiddleware(adminMiddleware(handleAdminLogs)))
+
 	// Serve frontend static files
 	fs := http.FileServer(http.Dir("./frontend/dist"))
 	mux.Handle("/assets/", fs)
@@ -144,7 +167,7 @@ func main() {
 	}
 
 	log.Printf("Email Verifier API starting on port %s", config.Port)
-	log.Printf("  Allowed domains: %v", config.AllowedDomains)
+	log.Printf("  Admin: %s", config.AdminEmail)
 	log.Printf("  SMTP check: %v", config.SMTPEnabled)
 	log.Printf("  Gravatar check: %v", config.GravatarEnabled)
 	log.Fatal(server.ListenAndServe())
@@ -178,46 +201,58 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Verify Supabase JWT
-		claims := jwt.MapClaims{}
-		token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			return []byte(config.SupabaseJWTSecret), nil
-		})
-
-		if err != nil || !token.Valid {
-			jsonError(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		// Check expiration
-		exp, ok := claims["exp"].(float64)
-		if !ok || time.Now().Unix() > int64(exp) {
-			jsonError(w, "Token expired", http.StatusUnauthorized)
-			return
-		}
-
-		// Extract email from claims
+		// Try local JWT verification first if secret is configured
 		email := ""
-		if userMeta, ok := claims["email"].(string); ok {
-			email = userMeta
+		if config.SupabaseJWTSecret != "" {
+			claims := jwt.MapClaims{}
+			token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				return []byte(config.SupabaseJWTSecret), nil
+			})
+
+			if err != nil || !token.Valid {
+				jsonError(w, "Invalid token", http.StatusUnauthorized)
+				return
+			}
+
+			exp, ok := claims["exp"].(float64)
+			if !ok || time.Now().Unix() > int64(exp) {
+				jsonError(w, "Token expired", http.StatusUnauthorized)
+				return
+			}
+
+			if e, ok := claims["email"].(string); ok {
+				email = e
+			}
+		} else {
+			// Fallback: verify token via Supabase API
+			req, _ := http.NewRequest("GET", config.SupabaseURL+"/auth/v1/user", nil)
+			req.Header.Set("Authorization", "Bearer "+tokenStr)
+			req.Header.Set("apikey", config.SupabaseServiceKey)
+
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Do(req)
+			if err != nil || resp.StatusCode != 200 {
+				jsonError(w, "Invalid token", http.StatusUnauthorized)
+				return
+			}
+			defer resp.Body.Close()
+
+			var user struct {
+				Email string `json:"email"`
+			}
+			json.NewDecoder(resp.Body).Decode(&user)
+			email = user.Email
 		}
 
-		// Check allowed domains
-		if len(config.AllowedDomains) > 0 && email != "" {
+		// Check cedeos domain
+		if email != "" {
 			parts := strings.Split(email, "@")
 			if len(parts) == 2 {
-				domain := parts[1]
-				allowed := false
-				for _, d := range config.AllowedDomains {
-					if strings.EqualFold(domain, d) {
-						allowed = true
-						break
-					}
-				}
-				if !allowed {
+				domain := strings.ToLower(parts[1])
+				if !strings.HasPrefix(domain, "cedeos.") && domain != "cedeos" {
 					jsonError(w, "Access denied: domain not allowed", http.StatusForbidden)
 					return
 				}
@@ -225,6 +260,17 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		r.Header.Set("X-User-Email", email)
+		next(w, r)
+	}
+}
+
+func adminMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		email := r.Header.Get("X-User-Email")
+		if !strings.EqualFold(email, config.AdminEmail) {
+			jsonError(w, "Admin access required", http.StatusForbidden)
+			return
+		}
 		next(w, r)
 	}
 }
@@ -254,7 +300,12 @@ func handleSingleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userEmail := r.Header.Get("X-User-Email")
 	result := verifyEmail(req.Email)
+
+	// Log activity
+	addLog(userEmail, "single_verify", req.Email, result.Status)
+
 	jsonResponse(w, result)
 }
 
@@ -300,6 +351,8 @@ func handleBulkVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userEmail := r.Header.Get("X-User-Email")
+
 	bulkMu.Lock()
 	jobCounter++
 	jobID := fmt.Sprintf("bulk_%d_%d", time.Now().Unix(), jobCounter)
@@ -314,7 +367,10 @@ func handleBulkVerify(w http.ResponseWriter, r *http.Request) {
 	bulkJobs[jobID] = job
 	bulkMu.Unlock()
 
-	go processBulkVerification(jobID, emails)
+	// Log activity
+	addLog(userEmail, "bulk_verify", fmt.Sprintf("%d emails uploaded", len(emails)), "processing")
+
+	go processBulkVerification(jobID, emails, userEmail)
 
 	jsonResponse(w, map[string]interface{}{
 		"id":     jobID,
@@ -379,6 +435,176 @@ func handleBulkDownload(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writer.Flush()
+}
+
+// --- Admin Handlers ---
+
+func handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if config.SupabaseServiceKey == "" {
+		jsonError(w, "Service key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	// List users via Supabase Admin API
+	req, _ := http.NewRequest("GET", config.SupabaseURL+"/auth/v1/admin/users", nil)
+	req.Header.Set("Authorization", "Bearer "+config.SupabaseServiceKey)
+	req.Header.Set("apikey", config.SupabaseServiceKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		jsonError(w, "Failed to fetch users", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Users []struct {
+			ID           string  `json:"id"`
+			Email        string  `json:"email"`
+			CreatedAt    string  `json:"created_at"`
+			LastSignInAt *string `json:"last_sign_in_at"`
+			Factors      []struct {
+				Status string `json:"status"`
+			} `json:"factors"`
+		} `json:"users"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		jsonError(w, "Failed to parse users", http.StatusInternalServerError)
+		return
+	}
+
+	type UserResponse struct {
+		ID           string `json:"id"`
+		Email        string `json:"email"`
+		CreatedAt    string `json:"created_at"`
+		LastSignInAt string `json:"last_sign_in_at"`
+		MFAEnabled   bool   `json:"mfa_enabled"`
+	}
+
+	users := make([]UserResponse, 0, len(result.Users))
+	for _, u := range result.Users {
+		mfa := false
+		for _, f := range u.Factors {
+			if f.Status == "verified" {
+				mfa = true
+				break
+			}
+		}
+		lastSign := ""
+		if u.LastSignInAt != nil {
+			lastSign = *u.LastSignInAt
+		}
+		users = append(users, UserResponse{
+			ID:           u.ID,
+			Email:        u.Email,
+			CreatedAt:    u.CreatedAt,
+			LastSignInAt: lastSign,
+			MFAEnabled:   mfa,
+		})
+	}
+
+	jsonResponse(w, map[string]interface{}{"users": users})
+}
+
+func handleAdminInvite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if config.SupabaseServiceKey == "" {
+		jsonError(w, "Service key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" {
+		jsonError(w, "Email is required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate cedeos domain
+	parts := strings.Split(req.Email, "@")
+	if len(parts) != 2 || !strings.HasPrefix(strings.ToLower(parts[1]), "cedeos.") {
+		jsonError(w, "Only cedeos.* email domains are allowed", http.StatusBadRequest)
+		return
+	}
+
+	// Invite user via Supabase Admin API (generates invite link)
+	body, _ := json.Marshal(map[string]interface{}{
+		"email": req.Email,
+	})
+
+	httpReq, _ := http.NewRequest("POST", config.SupabaseURL+"/auth/v1/invite", bytes.NewReader(body))
+	httpReq.Header.Set("Authorization", "Bearer "+config.SupabaseServiceKey)
+	httpReq.Header.Set("apikey", config.SupabaseServiceKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		jsonError(w, "Failed to invite user", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		var errResp map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		msg := "Failed to invite user"
+		if m, ok := errResp["msg"].(string); ok {
+			msg = m
+		}
+		if m, ok := errResp["message"].(string); ok {
+			msg = m
+		}
+		jsonError(w, msg, resp.StatusCode)
+		return
+	}
+
+	adminEmail := r.Header.Get("X-User-Email")
+	addLog(adminEmail, "invite_user", req.Email, "invited")
+
+	jsonResponse(w, map[string]string{"status": "invited", "email": req.Email})
+}
+
+func handleAdminLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		jsonError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	actionFilter := r.URL.Query().Get("action")
+
+	logMu.RLock()
+	defer logMu.RUnlock()
+
+	filtered := make([]ActivityLog, 0)
+	for i := len(actLogs) - 1; i >= 0; i-- {
+		if actionFilter != "" && actionFilter != "all" && actLogs[i].Action != actionFilter {
+			continue
+		}
+		filtered = append(filtered, actLogs[i])
+		if len(filtered) >= 200 {
+			break
+		}
+	}
+
+	jsonResponse(w, map[string]interface{}{"logs": filtered})
 }
 
 // --- Business Logic ---
@@ -507,7 +733,7 @@ func detectSMTPProvider(mxHost string) string {
 	}
 }
 
-func processBulkVerification(jobID string, emails []string) {
+func processBulkVerification(jobID string, emails []string, userEmail string) {
 	sem := make(chan struct{}, 5)
 	var wg sync.WaitGroup
 
@@ -560,6 +786,31 @@ func processBulkVerification(jobID string, emails []string) {
 	bulkJobs[jobID].Summary = summary
 	bulkJobs[jobID].CompletedAt = &now
 	bulkMu.Unlock()
+
+	// Update log with results
+	addLog(userEmail, "bulk_complete", fmt.Sprintf("Job %s: %d valid, %d invalid, %d catch-all", jobID, summary.Valid, summary.Invalid, summary.CatchAll), "completed")
+}
+
+// --- Logging ---
+
+func addLog(userEmail, action, details, result string) {
+	logMu.Lock()
+	defer logMu.Unlock()
+
+	logCounter++
+	actLogs = append(actLogs, ActivityLog{
+		ID:        fmt.Sprintf("log_%d", logCounter),
+		UserEmail: userEmail,
+		Action:    action,
+		Details:   details,
+		Result:    result,
+		CreatedAt: time.Now().Format(time.RFC3339),
+	})
+
+	// Keep max 1000 logs in memory
+	if len(actLogs) > 1000 {
+		actLogs = actLogs[len(actLogs)-1000:]
+	}
 }
 
 // --- Helpers ---

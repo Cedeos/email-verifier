@@ -1,9 +1,11 @@
 import { useAuth } from './lib/AuthContext'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
+import MFAVerify from './components/MFAVerify'
+import MFAEnroll from './components/MFAEnroll'
 
 function App() {
-  const { user, loading } = useAuth()
+  const { user, loading, mfaRequired, mfaEnrollRequired } = useAuth()
 
   if (loading) {
     return (
@@ -18,6 +20,14 @@ function App() {
 
   if (!user) {
     return <Login />
+  }
+
+  if (mfaEnrollRequired) {
+    return <MFAEnroll />
+  }
+
+  if (mfaRequired) {
+    return <MFAVerify />
   }
 
   return <Dashboard />
