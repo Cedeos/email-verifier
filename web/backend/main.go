@@ -25,6 +25,7 @@ type Config struct {
 	SupabaseURL        string
 	SupabaseJWTSecret  string
 	SupabaseServiceKey string
+	SupabaseAnonKey    string
 	AdminEmail         string
 	SMTPEnabled        bool
 	GravatarEnabled    bool
@@ -106,6 +107,7 @@ func main() {
 		SupabaseURL:        getEnv("SUPABASE_URL", ""),
 		SupabaseJWTSecret:  getEnv("SUPABASE_JWT_SECRET", ""),
 		SupabaseServiceKey: getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		SupabaseAnonKey:    getEnv("SUPABASE_ANON_KEY", ""),
 		AdminEmail:         getEnv("ADMIN_EMAIL", "alvin@cedeos.co.ke"),
 		SMTPEnabled:        getEnv("SMTP_ENABLED", "true") == "true",
 		GravatarEnabled:    getEnv("GRAVATAR_ENABLED", "true") == "true",
@@ -231,7 +233,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			// Fallback: verify token via Supabase API
 			req, _ := http.NewRequest("GET", config.SupabaseURL+"/auth/v1/user", nil)
 			req.Header.Set("Authorization", "Bearer "+tokenStr)
-			req.Header.Set("apikey", config.SupabaseServiceKey)
+			req.Header.Set("apikey", config.SupabaseAnonKey)
 
 			client := &http.Client{Timeout: 5 * time.Second}
 			resp, err := client.Do(req)
