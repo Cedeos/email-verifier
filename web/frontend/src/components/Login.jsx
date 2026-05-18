@@ -74,7 +74,7 @@ export default function Login() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@cedeos.co.ke"
+              placeholder="johndoe"
               className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#1a2e1a] focus:border-[#1a2e1a] outline-none text-gray-900 placeholder:text-gray-400 text-sm"
               disabled={loading}
               autoComplete="email"
