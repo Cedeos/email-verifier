@@ -4,6 +4,42 @@ import { supabase } from '../lib/supabase'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
+function extractCompanyFromDomain(domain) {
+  if (!domain) return null
+  const parts = domain.split('.')
+  if (parts.length >= 2) {
+    return parts[0].charAt(0).toUpperCase() + parts[0].slice(1)
+  }
+  return domain
+}
+
+function guessRole(username) {
+  if (!username) return null
+  const lower = username.toLowerCase()
+  const roleMap = {
+    'info': 'General Inquiries',
+    'support': 'Support',
+    'sales': 'Sales',
+    'admin': 'Administrator',
+    'hr': 'Human Resources',
+    'finance': 'Finance',
+    'marketing': 'Marketing',
+    'ceo': 'CEO',
+    'cto': 'CTO',
+    'cfo': 'CFO',
+    'coo': 'COO',
+    'contact': 'Contact',
+    'hello': 'General',
+    'team': 'Team',
+    'billing': 'Billing',
+    'accounts': 'Accounts',
+    'noreply': 'No Reply',
+    'no-reply': 'No Reply',
+  }
+  if (roleMap[lower]) return roleMap[lower]
+  return null
+}
+
 export default function SingleVerify({ onVerified }) {
   const { session } = useAuth()
   const [email, setEmail] = useState('')
@@ -29,16 +65,22 @@ export default function SingleVerify({ onVerified }) {
         body: JSON.stringify({ email: email.trim() }),
       })
 
+      const text = await res.text()
+      let data
+      try {
+        data = JSON.parse(text)
+      } catch {
+        throw new Error('Server temporarily unavailable. Please try again.')
+      }
+
       if (!res.ok) {
-        const data = await res.json()
         throw new Error(data.error || 'Verification failed')
       }
 
-      const data = await res.json()
       setResult(data)
 
-      // Save to Supabase history
-      await supabase.from('verifications').insert({
+      // Save to Supabase history (non-blocking)
+      supabase.from('verifications').insert({
         user_id: session.user.id,
         email: data.email,
         status: data.status,
@@ -59,9 +101,8 @@ export default function SingleVerify({ onVerified }) {
         full_inbox: data.full_inbox,
         host_exists: data.host_exists,
         disabled: data.disabled,
-      })
+      }).then(() => onVerified?.())
 
-      onVerified?.()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -69,40 +110,29 @@ export default function SingleVerify({ onVerified }) {
     }
   }
 
+  const company = result ? extractCompanyFromDomain(result.domain) : null
+  const role = result ? guessRole(result.username) : null
+
   return (
     <div className="space-y-6">
       {/* Verify Card */}
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-gray-100">
-          <div className="flex items-center gap-3 mb-1">
-            <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center">
-              <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">Single Email Validation</h2>
-              <p className="text-sm text-gray-500">Verify deliverability and get detailed information</p>
-            </div>
-          </div>
-        </div>
-
         <div className="p-6">
           <form onSubmit={handleVerify} className="flex gap-3">
-            <div className="flex-1 relative">
+            <div className="flex-1">
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="darshna.patel@mayfair.co.ke"
-                className="w-full px-4 py-3.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-gray-900 placeholder:text-gray-400 text-sm"
+                placeholder="name@company.com"
+                className="w-full px-4 py-3.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#1a2e1a] focus:border-[#1a2e1a] outline-none text-gray-900 placeholder:text-gray-400 text-sm"
                 disabled={loading}
               />
             </div>
             <button
               type="submit"
               disabled={loading || !email.trim()}
-              className="px-8 py-3.5 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md flex items-center gap-2"
+              className="px-8 py-3.5 bg-[#1a2e1a] text-white rounded-xl font-medium hover:bg-[#243d24] disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md flex items-center gap-2"
             >
               {loading ? (
                 <>
@@ -110,56 +140,78 @@ export default function SingleVerify({ onVerified }) {
                   Verifying
                 </>
               ) : (
-                'Go'
+                'Verify'
               )}
             </button>
           </form>
 
           {error && (
-            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm flex items-center gap-2">
-              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
-              </svg>
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
               {error}
             </div>
           )}
         </div>
       </div>
 
-      {/* Result Display - ZeroBounce style */}
+      {/* Result */}
       {result && (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          {/* Result Header */}
-          <div className="p-6 border-b border-gray-100 text-center">
-            <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3 ${getStatusBg(result.status)}`}>
-              <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
-              </svg>
+          {/* Header */}
+          <div className="p-6 border-b border-gray-100">
+            <div className="flex items-center gap-4">
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${getStatusBg(result.status)}`}>
+                {result.status === 'valid' ? (
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                ) : result.status === 'invalid' ? (
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                ) : (
+                  <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                  </svg>
+                )}
+              </div>
+              <div className="flex-1">
+                <p className="text-base font-semibold text-gray-900">{result.email}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <StatusBadge status={result.status} />
+                  {company && !result.free_email && (
+                    <span className="text-xs text-gray-500">{company}</span>
+                  )}
+                  {role && (
+                    <span className="text-xs text-gray-400">/ {role}</span>
+                  )}
+                </div>
+              </div>
             </div>
-            <p className="text-lg font-semibold text-gray-900">{result.email}</p>
-            <StatusBadge status={result.status} className="mt-2" />
           </div>
 
-          {/* Result Grid - matching ZeroBounce layout */}
-          <div className="grid grid-cols-2 md:grid-cols-3 divide-x divide-y divide-gray-100">
-            <ResultCell label="STATUS" value={result.status} highlight />
-            <ResultCell label="SUB-STATUS" value={result.sub_status || 'None'} />
-            <ResultCell label="FREE EMAIL" value={result.free_email ? 'Yes' : 'No'} />
-            <ResultCell label="DID YOU MEAN" value={result.suggestion || 'Unknown'} />
-            <ResultCell label="ACCOUNT" value={result.username || '-'} />
-            <ResultCell label="DOMAIN" value={result.domain || '-'} />
-            <ResultCell label="SMTP PROVIDER" value={result.smtp_provider || '-'} />
-            <ResultCell label="MX FOUND" value={result.mx_found ? 'Yes' : 'No'} />
-            <ResultCell label="MX RECORD" value={result.mx_record || '-'} />
-            <ResultCell label="CATCH-ALL" value={result.catch_all ? 'Yes' : 'No'} />
-            <ResultCell label="DELIVERABLE" value={result.deliverable ? 'Yes' : 'No'} />
-            <ResultCell label="DISPOSABLE" value={result.disposable ? 'Yes' : 'No'} warn={result.disposable} />
-            <ResultCell label="ROLE ACCOUNT" value={result.role_account ? 'Yes' : 'No'} />
-            <ResultCell label="HOST EXISTS" value={result.host_exists ? 'Yes' : 'No'} />
-            <ResultCell label="REACHABLE" value={result.reachable || 'unknown'} />
-            <ResultCell label="HAS GRAVATAR" value={result.has_gravatar ? 'Yes' : 'No'} />
-            <ResultCell label="FULL INBOX" value={result.full_inbox ? 'Yes' : 'No'} warn={result.full_inbox} />
-            <ResultCell label="DISABLED" value={result.disabled ? 'Yes' : 'No'} warn={result.disabled} />
+          {/* Details Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-gray-100">
+            <ResultCell label="Status" value={result.status} highlight />
+            <ResultCell label="Sub-Status" value={result.sub_status || 'None'} />
+            <ResultCell label="Domain" value={result.domain || '-'} />
+            <ResultCell label="SMTP Provider" value={result.smtp_provider || '-'} />
+            <ResultCell label="MX Record" value={result.mx_record || '-'} />
+            <ResultCell label="MX Found" value={result.mx_found ? 'Yes' : 'No'} />
+            <ResultCell label="Deliverable" value={result.deliverable ? 'Yes' : 'No'} good={result.deliverable} />
+            <ResultCell label="Catch-All" value={result.catch_all ? 'Yes' : 'No'} />
+            <ResultCell label="Reachable" value={result.reachable || 'unknown'} />
+            <ResultCell label="Free Email" value={result.free_email ? 'Yes' : 'No'} />
+            <ResultCell label="Disposable" value={result.disposable ? 'Yes' : 'No'} warn={result.disposable} />
+            <ResultCell label="Role Account" value={result.role_account ? 'Yes' : 'No'} />
+            {result.suggestion && (
+              <ResultCell label="Did You Mean" value={result.suggestion} highlight />
+            )}
+            {company && !result.free_email && (
+              <ResultCell label="Company" value={company} />
+            )}
+            {role && (
+              <ResultCell label="Role" value={role} />
+            )}
           </div>
         </div>
       )}
@@ -167,13 +219,14 @@ export default function SingleVerify({ onVerified }) {
   )
 }
 
-function ResultCell({ label, value, highlight, warn }) {
+function ResultCell({ label, value, highlight, warn, good }) {
   return (
-    <div className="p-4">
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">{label}</p>
+    <div className="bg-white p-4">
+      <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-1">{label}</p>
       <p className={`text-sm font-medium ${
         warn ? 'text-red-600' :
-        highlight ? 'text-indigo-600' :
+        good ? 'text-green-600' :
+        highlight ? 'text-[#1a2e1a]' :
         'text-gray-900'
       }`}>
         {value}
@@ -182,16 +235,16 @@ function ResultCell({ label, value, highlight, warn }) {
   )
 }
 
-function StatusBadge({ status, className = '' }) {
+function StatusBadge({ status }) {
   const styles = {
-    valid: 'bg-green-100 text-green-800 ring-green-600/20',
-    invalid: 'bg-red-100 text-red-800 ring-red-600/20',
-    'catch-all': 'bg-amber-100 text-amber-800 ring-amber-600/20',
-    unknown: 'bg-gray-100 text-gray-800 ring-gray-600/20',
+    valid: 'bg-green-100 text-green-800',
+    invalid: 'bg-red-100 text-red-800',
+    'catch-all': 'bg-amber-100 text-amber-800',
+    unknown: 'bg-gray-100 text-gray-800',
   }
 
   return (
-    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ring-1 ring-inset ${styles[status] || styles.unknown} ${className}`}>
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${styles[status] || styles.unknown}`}>
       {status}
     </span>
   )

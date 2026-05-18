@@ -27,8 +27,11 @@ export default function Admin() {
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
       if (res.ok) {
-        const data = await res.json()
-        setUsers(data.users || [])
+        const text = await res.text()
+        try {
+          const data = JSON.parse(text)
+          setUsers(data.users || [])
+        } catch { /* ignore parse errors */ }
       }
     } catch (err) {
       // ignore
@@ -46,8 +49,11 @@ export default function Admin() {
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
       if (res.ok) {
-        const data = await res.json()
-        setLogs(data.logs || [])
+        const text = await res.text()
+        try {
+          const data = JSON.parse(text)
+          setLogs(data.logs || [])
+        } catch { /* ignore parse errors */ }
       }
     } catch (err) {
       // ignore
