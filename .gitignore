@@ -2,3 +2,15 @@
 .vscode/
 vendor/
 covprofile
+
+# Web app
+web/frontend/node_modules/
+web/frontend/dist/
+web/frontend/.env
+web/backend/backend
+web/backend/backend.exe
+web/.env
+
+# OS files
+.DS_Store
+Thumbs.db
