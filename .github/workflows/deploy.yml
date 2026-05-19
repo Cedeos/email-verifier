@@ -1,0 +1,82 @@
+name: Deploy to Lightsail
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/deploy.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build backend
+        run: |
+          cd web/backend
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../server .
+          echo "Backend binary built successfully"
+
+      - name: Build frontend
+        run: |
+          cd web/frontend
+          npm ci
+          npm run build
+          echo "Frontend built successfully"
+
+      - name: Deploy to Lightsail
+        env:
+          SSH_KEY: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+          HOST: 63.32.49.191
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/key.pem
+          chmod 600 ~/.ssh/key.pem
+          ssh-keyscan -H $HOST >> ~/.ssh/known_hosts 2>/dev/null
+
+          echo "Uploading binary..."
+          scp -i ~/.ssh/key.pem server ubuntu@$HOST:/opt/verifier/server-new
+
+          echo "Uploading frontend..."
+          scp -i ~/.ssh/key.pem -r web/frontend/dist ubuntu@$HOST:/opt/verifier/frontend/dist-new
+
+          echo "Swapping and restarting..."
+          ssh -i ~/.ssh/key.pem ubuntu@$HOST << 'EOF'
+            mv /opt/verifier/server-new /opt/verifier/server
+            chmod +x /opt/verifier/server
+            rm -rf /opt/verifier/frontend/dist
+            mv /opt/verifier/frontend/dist-new /opt/verifier/frontend/dist
+            sudo systemctl restart verifier
+            sleep 3
+            if curl -sf http://localhost:8080/api/health > /dev/null; then
+              echo "DEPLOY SUCCESS - Service is healthy"
+            else
+              echo "DEPLOY FAILED - Service not responding"
+              sudo journalctl -u verifier --no-pager -n 20
+              exit 1
+            fi
+          EOF
+
+      - name: Deploy status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "::notice::Deployed successfully to verify.cedeos.co.ke"
+          else
+            echo "::error::Deployment failed! Check logs above."
+          fi

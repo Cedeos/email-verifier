@@ -14,3 +14,9 @@ web/.env
 # OS files
 .DS_Store
 Thumbs.db
+
+# Secrets and keys
+*.pem
+*.key
+aws-iam-policy.json
+deploy-aws.sh
