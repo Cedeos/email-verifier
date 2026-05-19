@@ -52,17 +52,29 @@ jobs:
           echo "Uploading binary..."
           scp -i ~/.ssh/key.pem server ubuntu@$HOST:/opt/verifier/server-new
 
+          echo "Packaging frontend..."
+          tar -czf frontend-dist.tar.gz -C web/frontend dist
+
           echo "Uploading frontend..."
-          scp -i ~/.ssh/key.pem -r web/frontend/dist ubuntu@$HOST:/opt/verifier/frontend/dist-new
+          scp -i ~/.ssh/key.pem frontend-dist.tar.gz ubuntu@$HOST:/opt/verifier/frontend-dist.tar.gz
 
           echo "Swapping and restarting..."
           ssh -i ~/.ssh/key.pem ubuntu@$HOST << 'EOF'
-            mv /opt/verifier/server-new /opt/verifier/server
-            chmod +x /opt/verifier/server
-            rm -rf /opt/verifier/frontend/dist
-            mv /opt/verifier/frontend/dist-new /opt/verifier/frontend/dist
+            cd /opt/verifier
+
+            # Swap binary
+            mv server-new server
+            chmod +x server
+
+            # Swap frontend
+            rm -rf frontend/dist
+            tar -xzf frontend-dist.tar.gz -C frontend/
+            rm frontend-dist.tar.gz
+
+            # Restart service
             sudo systemctl restart verifier
             sleep 3
+
             if curl -sf http://localhost:8080/api/health > /dev/null; then
               echo "DEPLOY SUCCESS - Service is healthy"
             else
