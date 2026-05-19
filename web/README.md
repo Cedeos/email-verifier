@@ -131,7 +131,16 @@ Every action is logged with:
 - **OS**: Ubuntu 24.04 LTS
 - **Static IP**: 63.32.49.191
 - **Ports open**: 22 (SSH), 80 (HTTP → redirects to HTTPS), 443 (HTTPS)
-- **Port 25**: Pending AWS approval for outbound SMTP verification
+
+### Kamatera SMTP Proxy
+- **Purpose**: SOCKS5 proxy for outbound port 25 SMTP verification
+- **IP**: 45.91.169.203
+- **Region**: EU (Amsterdam)
+- **OS**: Ubuntu 24.04 LTS
+- **Plan**: ~$4/month (1 vCPU, 1 GB RAM)
+- **Software**: dante-server (SOCKS5 proxy on port 1080)
+- **Proxy URI**: `socks5://proxyuser:CedeSmtp2026!@45.91.169.203:1080`
+- **Why**: AWS/GCP block port 25 outbound. Kamatera allows it by default.
 
 ### DNS
 - Zone: `cedeos-ke` in Google Cloud DNS
@@ -164,7 +173,7 @@ Set in `/etc/systemd/system/verifier.service`:
 | `ADMIN_EMAIL` | Email with admin panel access |
 | `SMTP_ENABLED` | Enable SMTP mailbox checks (true/false) |
 | `GRAVATAR_ENABLED` | Enable Gravatar lookup (true/false) |
-| `SOCKS5_PROXY` | Optional SOCKS5 proxy for SMTP (not currently used) |
+| `SOCKS5_PROXY` | SOCKS5 proxy for SMTP outbound (socks5://user:pass@host:port) |
 
 ---
 
@@ -376,9 +385,10 @@ sudo systemctl restart nginx
 | Component | Monthly Cost |
 |-----------|-------------|
 | AWS Lightsail ($5 plan) | $5.00 |
+| Kamatera SMTP proxy | $4.00 |
 | Static IP (attached) | $0.00 |
 | SSL (Let's Encrypt) | $0.00 |
 | DNS (Cloud DNS zone) | $0.20 |
 | Supabase (free tier) | $0.00 |
 | GitHub Actions (free tier) | $0.00 |
-| **Total** | **~$5.20/month** |
+| **Total** | **~$9.20/month** |
