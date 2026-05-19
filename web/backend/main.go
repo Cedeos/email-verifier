@@ -93,14 +93,15 @@ type ActivityLog struct {
 }
 
 var (
-	config     Config
-	verifier   *emailVerifier.Verifier
-	bulkJobs   = make(map[string]*BulkResult)
-	bulkMu     sync.RWMutex
-	jobCounter int
-	actLogs    []ActivityLog
-	logMu      sync.RWMutex
-	logCounter int
+	config         Config
+	verifier       *emailVerifier.Verifier
+	verifierNoCA   *emailVerifier.Verifier // verifier with catch-all check disabled
+	bulkJobs       = make(map[string]*BulkResult)
+	bulkMu         sync.RWMutex
+	jobCounter     int
+	actLogs        []ActivityLog
+	logMu          sync.RWMutex
+	logCounter     int
 )
 
 func main() {
@@ -137,6 +138,15 @@ func main() {
 	}
 	if config.GravatarEnabled {
 		verifier.EnableGravatarCheck()
+	}
+
+	// Second verifier with catch-all detection disabled - used as fallback
+	// when the main verifier reports ambiguous catch-all results
+	verifierNoCA = emailVerifier.NewVerifier().
+		EnableSMTPCheck().
+		DisableCatchAllCheck()
+	if config.SOCKS5Proxy != "" {
+		verifierNoCA.Proxy(config.SOCKS5Proxy)
 	}
 
 	mux := http.NewServeMux()
@@ -707,6 +717,25 @@ func verifyEmail(email string) VerificationResult {
 	vr.Deliverable = result.SMTP.Deliverable
 	vr.FullInbox = result.SMTP.FullInbox
 	vr.Disabled = result.SMTP.Disabled
+
+	// Library bug workaround: the library defaults CatchAll=true and only sets it
+	// to false on a very specific 550 error message. If the random RCPT probe got
+	// rejected with a different code (554, etc.), the library leaves CatchAll=true
+	// and skips the actual mailbox check. Re-run with catch-all disabled to get
+	// real deliverability results.
+	if result.SMTP.CatchAll && !result.SMTP.Deliverable {
+		smtpResult, err := verifierNoCA.CheckSMTP(result.Syntax.Domain, result.Syntax.Username)
+		if err == nil && smtpResult != nil {
+			vr.HostExists = smtpResult.HostExists
+			vr.Deliverable = smtpResult.Deliverable
+			vr.FullInbox = smtpResult.FullInbox
+			vr.Disabled = smtpResult.Disabled
+			// If the actual mailbox check succeeded, this isn't really catch-all
+			if smtpResult.Deliverable {
+				vr.CatchAll = false
+			}
+		}
+	}
 
 	// Honest status mapping based on actual SMTP results
 	switch {
