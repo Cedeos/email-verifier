@@ -179,6 +179,9 @@ func main() {
 	log.Printf("  Admin: %s", config.AdminEmail)
 	log.Printf("  SMTP check: %v", config.SMTPEnabled)
 	log.Printf("  Gravatar check: %v", config.GravatarEnabled)
+	if config.SOCKS5Proxy != "" {
+		log.Printf("  SOCKS5 proxy: configured")
+	}
 	log.Fatal(server.ListenAndServe())
 }
 
