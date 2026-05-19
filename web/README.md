@@ -139,8 +139,9 @@ Every action is logged with:
 - **OS**: Ubuntu 24.04 LTS
 - **Plan**: ~$4/month (1 vCPU, 1 GB RAM)
 - **Software**: dante-server (SOCKS5 proxy on port 1080)
-- **Proxy URI**: `socks5://proxyuser:CedeSmtp2026!@45.91.169.203:1080`
+- **Proxy URI**: `socks5://proxyuser:CedeSmtp2026Secure@45.91.169.203:1080`
 - **Why**: AWS/GCP block port 25 outbound. Kamatera allows it by default.
+- **Setup script**: See `proxy-setup-remote.sh` in repo root
 
 ### DNS
 - Zone: `cedeos-ke` in Google Cloud DNS
