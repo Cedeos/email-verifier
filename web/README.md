@@ -76,6 +76,7 @@ Live at: https://verify.cedeos.co.ke
 - Syntax validation
 - MX record lookup
 - SMTP mailbox existence check (RCPT TO probe, no emails sent)
+- Smart catch-all detection via fake email interleaving
 - Catch-all domain detection
 - Disposable email detection (auto-updated daily)
 - Free email provider detection
@@ -83,6 +84,27 @@ Live at: https://verify.cedeos.co.ke
 - Domain typo suggestions
 - Gravatar check
 - SMTP provider identification (Google, Microsoft, Yahoo, etc.)
+
+### Smart Catch-All Detection (Fake Email Interleaving)
+
+Standard SMTP verification fails on Google Workspace because Google returns
+`250 OK` to all RCPT TO probes when it detects automated scanning. Our system
+bypasses this with a two-step comparison:
+
+1. Probe the **actual mailbox** (e.g., `alvin@company.com`) with catch-all detection disabled
+2. Probe a **randomly generated fake mailbox** (e.g., `verify-test-a8f3c2d1@company.com`)
+3. Compare the responses:
+
+| Real Probe | Fake Probe | Verdict |
+|-----------|-----------|---------|
+| Accepted (250) | Rejected (550) | **valid** — mailbox confirmed to exist |
+| Rejected (550) | Rejected (550) | **invalid** — mailbox doesn't exist |
+| Accepted (250) | Accepted (250) | **risky** — genuine catch-all or provider gaslighting |
+| Rejected (550) | Accepted (250) | **invalid** — edge case, treat as non-existent |
+
+This technique is what professional verification services (ZeroBounce, Reacher, etc.)
+use under the hood. If Google starts returning fake 250 OK to both probes, we
+correctly classify it as "risky" rather than falsely reporting "valid".
 
 ### Verification Statuses
 | Status | Meaning |
@@ -141,7 +163,26 @@ Every action is logged with:
 - **Software**: dante-server (SOCKS5 proxy on port 1080)
 - **Proxy URI**: `socks5://proxyuser:CedeSmtp2026Secure@45.91.169.203:1080`
 - **Why**: AWS/GCP block port 25 outbound. Kamatera allows it by default.
-- **Setup script**: See `proxy-setup-remote.sh` in repo root
+- **Firewall**: UFW — SSH (22), SOCKS5 (1080), Reacher API (8080 from Lightsail only)
+
+### DNS Records for Verification Infrastructure
+
+| Record | Type | Value | Purpose |
+|--------|------|-------|---------|
+| `verify.cedeos.co.ke` | A | 63.32.49.191 | Main app (Lightsail) |
+| `smtp-proxy.cedeos.co.ke` | A | 45.91.169.203 | EHLO hostname for SMTP probes |
+| `probe.cedeos.co.ke` | TXT | `v=spf1 ip4:45.91.169.203 -all` | SPF for verification probes |
+
+### Domain Reputation Protection
+
+The verification system uses a **separate subdomain** (`probe.cedeos.co.ke`) to
+isolate all SMTP probe activity from the main domain's email reputation:
+
+- **EHLO hostname**: `smtp-proxy.cedeos.co.ke` (resolves to Kamatera proxy IP)
+- **MAIL FROM**: `verify@probe.cedeos.co.ke` (separate SPF, only authorizes proxy IP)
+- **Main domain SPF**: Untouched (`cedeos.co.ke` keeps its existing Lark/Google policy)
+- **No actual emails sent**: Only RCPT TO probes, connection closed before DATA
+- **Rate limiting**: Max 5 concurrent SMTP checks to avoid triggering anti-spam
 
 ### DNS
 - Zone: `cedeos-ke` in Google Cloud DNS
@@ -354,15 +395,33 @@ sudo journalctl -u nginx -n 20 --no-pager
 sudo certbot renew --dry-run
 ```
 
-### Check if port 25 is open (after AWS approval)
+### Check if port 25 is open (from Kamatera proxy)
 ```bash
-telnet gmail-smtp-in.l.google.com 25
+ssh -i ~/.ssh/kamatera_key root@45.91.169.203 "telnet gmail-smtp-in.l.google.com 25"
 ```
+
+### Check SOCKS5 proxy is running (from Kamatera)
+```bash
+ssh -i ~/.ssh/kamatera_key root@45.91.169.203 "ss -tlnp | grep 1080"
+```
+
+### Test verification from Lightsail via proxy
+```bash
+ssh -i lightsail-key.pem ubuntu@63.32.49.191 "curl -s --proxy-user proxyuser:CedeSmtp2026Secure --socks5-hostname 45.91.169.203:1080 http://api.ipify.org"
+```
+
+### Kamatera firewall locked out (SSH blocked)
+1. Go to console.kamatera.com → Servers → Console (VNC)
+2. Login as root
+3. Run: `ufw allow 22 && ufw reload`
 
 ### Restart everything
 ```bash
-sudo systemctl restart verifier
-sudo systemctl restart nginx
+# Lightsail
+ssh -i lightsail-key.pem ubuntu@63.32.49.191 "sudo systemctl restart verifier && sudo systemctl restart nginx"
+
+# Kamatera proxy
+ssh -i ~/.ssh/kamatera_key root@45.91.169.203 "systemctl restart danted"
 ```
 
 ---
@@ -378,6 +437,9 @@ sudo systemctl restart nginx
 - No sign-up flow — admin creates accounts with passwords
 - SSH key required for server access
 - Supabase RLS policies on all tables
+- SMTP probes use isolated subdomain (`probe.cedeos.co.ke`) to protect main domain reputation
+- Kamatera proxy firewall restricts API access to Lightsail IP only
+- No actual emails are ever sent — only RCPT TO probes with immediate QUIT
 
 ---
 
