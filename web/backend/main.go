@@ -131,8 +131,8 @@ func main() {
 	verifier = emailVerifier.NewVerifier().
 		EnableDomainSuggest().
 		EnableAutoUpdateDisposable().
-		HelloName("verify.cedeos.co.ke").
-		FromEmail("verify@cedeos.co.ke")
+		HelloName("smtp-proxy.cedeos.co.ke").
+		FromEmail("verify@probe.cedeos.co.ke")
 
 	if config.SMTPEnabled {
 		verifier.EnableSMTPCheck()
@@ -149,8 +149,8 @@ func main() {
 	verifierNoCA = emailVerifier.NewVerifier().
 		EnableSMTPCheck().
 		DisableCatchAllCheck().
-		HelloName("verify.cedeos.co.ke").
-		FromEmail("verify@cedeos.co.ke")
+		HelloName("smtp-proxy.cedeos.co.ke").
+		FromEmail("verify@probe.cedeos.co.ke")
 	if config.SOCKS5Proxy != "" {
 		verifierNoCA.Proxy(config.SOCKS5Proxy)
 	}
