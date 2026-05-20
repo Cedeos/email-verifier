@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -142,8 +144,8 @@ func main() {
 		verifier.EnableGravatarCheck()
 	}
 
-	// Second verifier with catch-all detection disabled - used as fallback
-	// when the main verifier reports ambiguous catch-all results
+	// Second verifier with catch-all detection disabled - used for the actual
+	// mailbox probe in our two-step verification (real email + fake email comparison)
 	verifierNoCA = emailVerifier.NewVerifier().
 		EnableSMTPCheck().
 		DisableCatchAllCheck().
@@ -722,46 +724,80 @@ func verifyEmail(email string) VerificationResult {
 	vr.FullInbox = result.SMTP.FullInbox
 	vr.Disabled = result.SMTP.Disabled
 
-	// Library bug workaround: the library defaults CatchAll=true and only sets it
-	// to false on a very specific 550 error message. If the random RCPT probe got
-	// rejected with a different code (554, etc.), the library leaves CatchAll=true
-	// and skips the actual mailbox check. Re-run with catch-all disabled to get
-	// real deliverability results.
-	if result.SMTP.CatchAll && !result.SMTP.Deliverable {
-		smtpResult, err := verifierNoCA.CheckSMTP(result.Syntax.Domain, result.Syntax.Username)
-		if err == nil && smtpResult != nil {
-			vr.HostExists = smtpResult.HostExists
-			vr.Deliverable = smtpResult.Deliverable
-			vr.FullInbox = smtpResult.FullInbox
-			vr.Disabled = smtpResult.Disabled
-			// If the actual mailbox check succeeded, this isn't really catch-all
-			if smtpResult.Deliverable {
-				vr.CatchAll = false
+	// SMART CATCH-ALL DETECTION (Fake Email Interleaving)
+	// The library reports catch-all=true if the random RCPT probe gets accepted.
+	// However, providers like Google sometimes return 250 OK for ALL probes when
+	// they detect automated scanning. We need to distinguish between:
+	//   1. Genuine catch-all domain (every email accepted forever)
+	//   2. Fake catch-all (provider is gaslighting us)
+	//   3. Normal domain where the actual user check needs to happen separately
+	//
+	// Strategy: probe both a fake address AND the real address with catch-all
+	// detection disabled. Compare the responses:
+	//   - Fake REJECTED, real ACCEPTED  -> mailbox exists (valid)
+	//   - Fake REJECTED, real REJECTED  -> mailbox doesn't exist (invalid)
+	//   - Fake ACCEPTED, real ACCEPTED  -> genuine catch-all OR provider gaslighting
+	//   - Fake ACCEPTED, real REJECTED  -> shouldn't happen, treat as invalid
+	if result.SMTP.HostExists {
+		// Probe the actual mailbox without catch-all check (gets us the real answer)
+		realResult, _ := verifierNoCA.CheckSMTP(result.Syntax.Domain, result.Syntax.Username)
+
+		// Probe a fake mailbox to see if domain accepts everything
+		fakeUser := generateFakeUsername()
+		fakeResult, _ := verifierNoCA.CheckSMTP(result.Syntax.Domain, fakeUser)
+
+		realAccepted := realResult != nil && realResult.Deliverable
+		fakeAccepted := fakeResult != nil && fakeResult.Deliverable
+
+		switch {
+		case realAccepted && !fakeAccepted:
+			// Real mailbox accepted, fake rejected = mailbox confirmed to exist
+			vr.Deliverable = true
+			vr.CatchAll = false
+			vr.HostExists = true
+		case !realAccepted && !fakeAccepted:
+			// Both rejected = mailbox doesn't exist
+			vr.Deliverable = false
+			vr.CatchAll = false
+			vr.HostExists = realResult != nil && realResult.HostExists
+			if realResult != nil {
+				vr.FullInbox = realResult.FullInbox
+				vr.Disabled = realResult.Disabled
 			}
+		case realAccepted && fakeAccepted:
+			// Both accepted = either genuine catch-all or provider gaslighting
+			// Mark as catch-all (risky) - we can't confirm the specific mailbox
+			vr.Deliverable = false
+			vr.CatchAll = true
+		default:
+			// Edge case: real rejected, fake accepted - treat as invalid
+			vr.Deliverable = false
+			vr.CatchAll = false
 		}
 	}
 
 	// Honest status mapping based on actual SMTP results
 	switch {
-	case result.SMTP.Disabled:
+	case vr.Disabled:
 		vr.Status = "invalid"
 		vr.SubStatus = "mailbox_disabled"
-	case result.SMTP.FullInbox:
+		vr.Reachable = "no"
+	case vr.FullInbox:
 		vr.Status = "risky"
 		vr.SubStatus = "full_inbox"
 		vr.Reachable = "unknown"
-	case !result.SMTP.HostExists:
+	case !vr.HostExists:
 		// Couldn't connect to SMTP server (port 25 blocked, etc.)
 		vr.Status = "unknown"
 		vr.SubStatus = "smtp_unreachable"
 		vr.Reachable = "unknown"
-	case result.SMTP.Deliverable:
+	case vr.Deliverable:
 		// SMTP server confirmed mailbox exists - this is the only true "valid"
 		vr.Status = "valid"
 		vr.SubStatus = "mailbox_exists"
 		vr.Reachable = "yes"
-	case result.SMTP.CatchAll:
-		// Domain accepts all emails - we don't know if the specific mailbox exists
+	case vr.CatchAll:
+		// Domain accepts all emails (genuine or provider gaslighting)
 		vr.Status = "risky"
 		vr.SubStatus = "catch_all_domain"
 		vr.Reachable = "unknown"
@@ -894,6 +930,15 @@ func addLog(userEmail, action, details, result string) {
 }
 
 // --- Helpers ---
+
+// generateFakeUsername creates a random username unlikely to exist.
+// Used to interleave a fake probe alongside the real mailbox check
+// to detect provider gaslighting (sending fake 250 OK to all probes).
+func generateFakeUsername() string {
+	bytes := make([]byte, 8)
+	rand.Read(bytes)
+	return "verify-test-" + hex.EncodeToString(bytes)
+}
 
 func jsonResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
