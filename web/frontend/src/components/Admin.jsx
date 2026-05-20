@@ -64,7 +64,7 @@ export default function Admin() {
 
   const handleInvite = async (e) => {
     e.preventDefault()
-    if (!inviteEmail.trim()) return
+    if (!inviteEmail.trim() || !invitePassword.trim()) return
 
     setInviteLoading(true)
     setInviteMsg(null)
@@ -82,9 +82,11 @@ export default function Admin() {
       let data
       try { data = JSON.parse(text) } catch { data = { error: 'Server error' } }
       if (res.ok) {
-        setInviteMsg({ type: 'success', text: `Created account for ${inviteEmail.trim()}. Share the password with them.` })
-        setInviteEmail('')
-        setInvitePassword('')
+        setInviteMsg({
+          type: 'success',
+          text: `Account created for ${inviteEmail.trim()}`,
+          credentials: { email: inviteEmail.trim(), password: invitePassword.trim() }
+        })
         fetchUsers()
       } else {
         setInviteMsg({ type: 'error', text: data.error || 'Failed to create user' })
@@ -164,13 +166,48 @@ export default function Admin() {
                   </button>
                 </div>
               </form>
-              {inviteMsg && (
-                <div className={`mt-3 p-3 rounded-lg text-sm ${
-                  inviteMsg.type === 'success'
-                    ? 'bg-green-50 border border-green-200 text-green-700'
-                    : 'bg-red-50 border border-red-200 text-red-700'
-                }`}>
+              {inviteMsg && inviteMsg.type === 'error' && (
+                <div className="mt-3 p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700">
                   {inviteMsg.text}
+                </div>
+              )}
+              {inviteMsg && inviteMsg.type === 'success' && inviteMsg.credentials && (
+                <div className="mt-4 p-5 rounded-xl bg-green-50 border border-green-200">
+                  <div className="flex items-center gap-2 mb-3">
+                    <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="text-sm font-semibold text-green-800">Account created successfully</p>
+                  </div>
+                  <div className="bg-white rounded-lg p-4 border border-green-100 text-sm text-gray-800 font-mono whitespace-pre-line select-all">
+{`Hi ${inviteMsg.credentials.email.split('@')[0]},
+
+Your CedeOS Verify account is ready.
+
+Login: https://verify.cedeos.co.ke
+Email: ${inviteMsg.credentials.email}
+Password: ${inviteMsg.credentials.password}
+
+On first login you'll be asked to set up 2FA using an authenticator app (Google Authenticator, Authy, etc).
+
+- CedeOS Team`}
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(`Hi ${inviteMsg.credentials.email.split('@')[0]},\n\nYour CedeOS Verify account is ready.\n\nLogin: https://verify.cedeos.co.ke\nEmail: ${inviteMsg.credentials.email}\nPassword: ${inviteMsg.credentials.password}\n\nOn first login you'll be asked to set up 2FA using an authenticator app (Google Authenticator, Authy, etc).\n\n- CedeOS Team`)
+                      }}
+                      className="px-4 py-2 bg-[#1a2e1a] text-white rounded-lg text-xs font-medium hover:bg-[#243d24] transition-all"
+                    >
+                      Copy Message
+                    </button>
+                    <button
+                      onClick={() => { setInviteMsg(null); setInviteEmail(''); setInvitePassword('') }}
+                      className="px-4 py-2 border border-gray-200 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-50 transition-all"
+                    >
+                      Done
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
