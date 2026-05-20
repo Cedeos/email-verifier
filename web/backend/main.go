@@ -598,7 +598,9 @@ func handleAdminInvite(w http.ResponseWriter, r *http.Request) {
 	httpReq, _ := http.NewRequest("POST", config.SupabaseURL+"/auth/v1/admin/users", bytes.NewReader(body))
 	httpReq.Header.Set("Authorization", "Bearer "+config.SupabaseServiceKey)
 	httpReq.Header.Set("apikey", config.SupabaseServiceKey)
-	httpReq.Header.Set("Content-Type", "application/json")	client := &http.Client{Timeout: 10 * time.Second}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		jsonError(w, "Failed to create user", http.StatusInternalServerError)
