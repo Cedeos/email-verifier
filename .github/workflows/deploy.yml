@@ -50,26 +50,24 @@ jobs:
           ssh-keyscan -H $HOST >> ~/.ssh/known_hosts 2>/dev/null
 
           echo "Uploading binary..."
-          scp -i ~/.ssh/key.pem server ubuntu@$HOST:/opt/verifier/server-new
+          scp -i ~/.ssh/key.pem server ubuntu@$HOST:/tmp/server-new
 
           echo "Packaging frontend..."
           tar -czf frontend-dist.tar.gz -C web/frontend dist
 
           echo "Uploading frontend..."
-          scp -i ~/.ssh/key.pem frontend-dist.tar.gz ubuntu@$HOST:/opt/verifier/frontend-dist.tar.gz
+          scp -i ~/.ssh/key.pem frontend-dist.tar.gz ubuntu@$HOST:/tmp/frontend-dist.tar.gz
 
           echo "Swapping and restarting..."
           ssh -i ~/.ssh/key.pem ubuntu@$HOST << 'EOF'
-            cd /opt/verifier
-
             # Swap binary
-            mv server-new server
-            chmod +x server
+            sudo mv /tmp/server-new /opt/verifier/server
+            sudo chmod +x /opt/verifier/server
 
-            # Swap frontend
-            rm -rf frontend/dist
-            tar -xzf frontend-dist.tar.gz -C frontend/
-            rm frontend-dist.tar.gz
+            # Swap frontend (use sudo since dir is owned by root)
+            sudo rm -rf /opt/verifier/frontend/dist
+            sudo tar -xzf /tmp/frontend-dist.tar.gz -C /opt/verifier/frontend/
+            sudo rm -f /tmp/frontend-dist.tar.gz
 
             # Restart service
             sudo systemctl restart verifier
